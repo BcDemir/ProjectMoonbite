@@ -13,6 +13,7 @@ class Barricade:
         self.health = self.max_health
         self.damage_timer = 0
         self.damage_interval = 120  # 2 seconds at 60 FPS
+        self.damage_reduction = 0  # Percentage reduction (0-1)
         
         # Visual properties
         self.base_color = (139, 69, 19)  # Brown
@@ -34,6 +35,10 @@ class Barricade:
     
     def take_damage(self, amount):
         """Apply damage to the barricade"""
+        # Apply damage reduction if any
+        if hasattr(self, 'damage_reduction') and self.damage_reduction > 0:
+            amount = amount * (1 - self.damage_reduction)
+            
         self.health -= amount
         if self.health < 0:
             self.health = 0
@@ -113,3 +118,9 @@ class Barricade:
         
         # Border
         pygame.draw.rect(screen, (0, 0, 0), (bar_x, bar_y, bar_width, bar_height), 1)
+        
+        # Draw damage reduction indicator if any
+        if hasattr(self, 'damage_reduction') and self.damage_reduction > 0:
+            dr_text = pygame.font.SysFont(None, 20).render(
+                f"DR: {int(self.damage_reduction * 100)}%", True, (255, 255, 255))
+            screen.blit(dr_text, (bar_x, bar_y - 20))

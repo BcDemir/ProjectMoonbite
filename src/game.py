@@ -8,12 +8,14 @@ from src.zombie import Zombie
 from src.world import World
 from src.barricade import Barricade
 from src.camera import Camera
+from src.shop import Shop
 
 class GameState(Enum):
     DAY = 1
     NIGHT = 2
     MENU = 3
     GAME_OVER = 4
+    SHOP = 5
 
 class Game:
     def __init__(self):
@@ -47,18 +49,29 @@ class Game:
         # Camera system
         self.camera = Camera(self.width, self.height, self.world.width)
         
+        # Shop system
+        self.shop = Shop(self.width, self.height)
+        
         # Game stats
         self.score = 0
-        self.resources_collected = 0
+        self.resources = 0  # Currency for shop
+        self.resources_collected = 0  # Counter for collected resources
         self.zombies_killed = 0
+        
+        # Zombie spawn tracking
+        self.zombies_spawned_tonight = 0
+        self.max_zombies_tonight = 20
         
         # Load assets
         self.load_assets()
     
     def load_assets(self):
-        # Placeholder for loading images, sounds, etc.
-        # In a real implementation, you would load your assets here
-        pass
+        # Initialize pygame modules
+        pygame.font.init()
+        if not pygame.mixer.get_init():
+            pygame.mixer.init()
+        
+        # In a real implementation, you would load more assets here
     
     def handle_events(self):
         for event in pygame.event.get():
@@ -72,6 +85,16 @@ class Game:
                     self.prepare_day()
                 elif self.state == GameState.GAME_OVER and event.key == pygame.K_r:
                     self.reset_game()
+                # Skip to next phase with N key
+                elif self.state == GameState.DAY and event.key == pygame.K_n:
+                    self.cycle_timer = self.day_duration  # Force day to end
+                elif self.state == GameState.NIGHT and event.key == pygame.K_n:
+                    self.cycle_timer = self.night_duration  # Force night to end
+            
+            # Handle shop events
+            if self.state == GameState.SHOP:
+                if self.shop.handle_event(event):
+                    continue  # Event was handled by shop
             
             # Handle player input (only when playing)
             if self.state == GameState.DAY or self.state == GameState.NIGHT:
@@ -87,6 +110,8 @@ class Game:
             self.update_menu()
         elif self.state == GameState.GAME_OVER:
             self.update_game_over()
+        elif self.state == GameState.SHOP:
+            self.update_shop()
     
     def update_day(self):
         # Update world
@@ -99,14 +124,20 @@ class Game:
         self.camera.update(self.player.rect.centerx)
         
         # Track resources collected
-        self.resources_collected = sum(1 for resource in self.world.resources if resource.collected)
+        collected_count = sum(1 for resource in self.world.resources if resource.collected)
+        
+        # Add resources for newly collected items
+        new_collected = collected_count - self.resources_collected
+        if new_collected > 0:
+            self.resources += new_collected * 5  # Each resource is worth 5 currency
+            self.resources_collected = collected_count
         
         # Check if day is over
         self.cycle_timer += 1 / self.fps
         if self.cycle_timer >= self.day_duration:
             self.cycle_timer = 0
-            self.state = GameState.NIGHT
-            self.prepare_night()
+            self.state = GameState.SHOP  # Go to shop before night
+            self.shop.open(self.player, self.barricade, self.resources)
     
     def update_night(self):
         # Position player behind barricade
@@ -161,6 +192,18 @@ class Game:
                     self.zombies.remove(zombie)
                     self.score += 10
                     self.zombies_killed += 1
+                    
+                    # Add resources for killing zombies
+                    if zombie.type == "normal":
+                        self.resources += 2
+                    elif zombie.type == "fast":
+                        self.resources += 3
+                    elif zombie.type == "tank":
+                        self.resources += 8
+                    elif zombie.type == "exploder":
+                        self.resources += 5
+                    elif zombie.type == "spitter":
+                        self.resources += 6
             
             # Check if zombie reached player (if barricade is destroyed)
             elif self.barricade.is_destroyed() and zombie.rect.colliderect(self.player.rect):
@@ -221,11 +264,22 @@ class Game:
             self.barricade.take_damage(total_damage)
         
         # Spawn new zombies based on difficulty (day count)
-        max_zombies = 5 + self.day_count * 2
-        spawn_chance = 30  # Lower is more frequent
+        # Calculate max active zombies based on day count
+        if self.day_count == 1:
+            max_active_zombies = 8  # First night is easier
+        else:
+            max_active_zombies = 8 + (self.day_count - 1) * 3  # +3 active zombies per night
         
-        if len(self.zombies) < max_zombies and random.randint(0, spawn_chance) == 0:
-            self.zombies.append(Zombie.spawn_zombie(self.width, self.height))
+        # Spawn frequency increases with difficulty
+        base_spawn_chance = 60  # Higher is less frequent
+        spawn_chance = max(10, base_spawn_chance - (self.day_count * 5))  # Minimum 10
+        
+        # Spawn zombies if under both the active limit and total night limit
+        if (len(self.zombies) < max_active_zombies and 
+            self.zombies_spawned_tonight < self.max_zombies_tonight and 
+            random.randint(0, spawn_chance) == 0):
+            self.zombies.append(Zombie.spawn_zombie(self.width, self.height, self.day_count))
+            self.zombies_spawned_tonight += 1
         
         # Check if night is over
         self.cycle_timer += 1 / self.fps
@@ -246,14 +300,28 @@ class Game:
         # Game over logic - nothing to update in this simple implementation
         pass
     
+    def update_shop(self):
+        """Update shop state"""
+        # Shop is handled through events
+        if not self.shop.active:
+            # Shop is closed, proceed to night
+            self.state = GameState.NIGHT
+            self.prepare_night()
+            
+        # Update resources from shop
+        self.resources = self.shop.resources
+    
     def reset_game(self):
         # Reset game state for a new game
         self.state = GameState.DAY
         self.cycle_timer = 0
         self.day_count = 1
         self.score = 0
+        self.resources = 0
         self.resources_collected = 0
         self.zombies_killed = 0
+        self.zombies_spawned_tonight = 0
+        self.max_zombies_tonight = 20
         
         # Reset player
         self.player = Player(self.width // 2, self.height - 200)
@@ -290,6 +358,9 @@ class Game:
         # Generate new level layout
         self.world.generate_level()
         
+        # Reset resources collected counter for the new day
+        self.resources_collected = 0
+        
         # Increment day count
         self.day_count += 1
     
@@ -307,6 +378,18 @@ class Game:
         self.zombies.clear()
         self.explosions.clear()
         
+        # Reset zombie counter for the night
+        self.zombies_spawned_tonight = 0
+        
+        # Calculate max zombies for this night
+        if self.day_count == 1:
+            self.max_zombies_tonight = 20  # First night limit
+        else:
+            self.max_zombies_tonight = 20 + (self.day_count - 1) * 10  # +10 zombies per night
+        
+        # Spawn initial zombies based on day count
+        self.spawn_initial_zombies()
+        
         # Make sure player has at least some ammo for the night
         min_total_ammo = self.player.magazine_size * 3
         if self.player.ammo_total < min_total_ammo:
@@ -318,6 +401,45 @@ class Game:
             bullets_to_add = min(bullets_needed, self.player.ammo_total)
             self.player.magazine_current += bullets_to_add
             self.player.ammo_total -= bullets_to_add
+    
+    def spawn_initial_zombies(self):
+        """Spawn an initial wave of zombies based on day count"""
+        # Calculate number of zombies to spawn
+        if self.day_count == 1:
+            # First night: 3 normal zombies
+            common_count = 3
+            rare_count = 0
+        else:
+            # Later nights: increasing numbers
+            common_count = 3 + (self.day_count - 1) * 2
+            rare_count = self.day_count - 1
+        
+        # Update zombie counter
+        self.zombies_spawned_tonight = common_count + rare_count
+        
+        # Spawn common zombies (normal and fast)
+        for _ in range(common_count):
+            # Position zombies at different distances
+            x = self.width + random.randint(50, 500)
+            y = self.height - 100 - random.randint(0, 20)
+            
+            # 70% normal, 30% fast for common zombies
+            zombie_type = "fast" if random.random() < 0.3 else "normal"
+            self.zombies.append(Zombie(x, y, zombie_type))
+        
+        # Spawn rare zombies (tank, exploder, spitter)
+        for _ in range(rare_count):
+            # Position rare zombies further back
+            x = self.width + random.randint(300, 800)
+            y = self.height - 100 - random.randint(0, 20)
+            
+            # Equal chance for each rare type
+            zombie_type = random.choice(["tank", "exploder", "spitter"])
+            self.zombies.append(Zombie(x, y, zombie_type))
+            
+            # Equal chance for each rare type
+            zombie_type = random.choice(["tank", "exploder", "spitter"])
+            self.zombies.append(Zombie(x, y, zombie_type))
     
     def render(self):
         # Clear screen
@@ -332,6 +454,8 @@ class Game:
             self.render_menu()
         elif self.state == GameState.GAME_OVER:
             self.render_game_over()
+        elif self.state == GameState.SHOP:
+            self.render_shop()
         
         # Update display
         pygame.display.flip()
@@ -344,7 +468,6 @@ class Game:
         self.player.render(self.screen, self.camera)
         
         # Draw UI
-        self.render_ui()
         self.render_ui()
     
     def render_night(self):
@@ -398,6 +521,13 @@ class Game:
         self.screen.blit(score, (self.width // 2 - score.get_width() // 2, self.height // 2))
         self.screen.blit(restart, (self.width // 2 - restart.get_width() // 2, self.height // 2 + 100))
     
+    def render_shop(self):
+        # Draw the world in the background (dimmed)
+        self.render_day()
+        
+        # Let the shop system handle its own rendering
+        self.shop.render(self.screen)
+    
     def render_ui(self):
         # Draw UI elements like health, ammo, day/night indicator
         font = pygame.font.SysFont(None, 36)
@@ -412,8 +542,12 @@ class Game:
         # Day/Night indicator
         if self.state == GameState.DAY:
             time_text = font.render(f"Day {self.day_count} - {int(self.day_duration - self.cycle_timer)}s until night", True, (0, 0, 0))
+            skip_text = small_font.render("Press N to skip to shop", True, (100, 100, 100))
+            self.screen.blit(skip_text, (20, 80))
         else:
             time_text = font.render(f"Night {self.day_count} - {int(self.night_duration - self.cycle_timer)}s until day", True, (255, 255, 255))
+            skip_text = small_font.render("Press N to skip to day", True, (150, 150, 150))
+            self.screen.blit(skip_text, (20, 80))
         
         self.screen.blit(time_text, (20, 50))
         
@@ -426,17 +560,44 @@ class Game:
         
         if self.state == GameState.DAY:
             resources_text = font.render(f"Resources: {collected_count}/{total_count}", True, (255, 255, 255))
+            currency_text = font.render(f"Currency: {self.resources}", True, (255, 255, 0))
         else:
             resources_text = font.render(f"Zombies Killed: {self.zombies_killed}", True, (255, 255, 255))
+            currency_text = font.render(f"Currency: {self.resources}", True, (255, 255, 0))
         
         self.screen.blit(score_text, (self.width - score_text.get_width() - 20, 20))
         self.screen.blit(resources_text, (self.width - resources_text.get_width() - 20, 60))
+        self.screen.blit(currency_text, (self.width - currency_text.get_width() - 20, 100))
         
         # Barricade health (only during night)
         if self.state == GameState.NIGHT:
             barricade_health = int(self.barricade.health / self.barricade.max_health * 100)
             barricade_text = font.render(f"Barricade: {barricade_health}%", True, (255, 255, 255))
             self.screen.blit(barricade_text, (self.width - barricade_text.get_width() - 20, 100))
+            
+            # Difficulty indicator
+            difficulty_color = (0, 255, 0)  # Green for easy
+            if self.day_count <= 3:
+                difficulty_text = "Easy"
+            elif self.day_count <= 6:
+                difficulty_text = "Medium"
+                difficulty_color = (255, 255, 0)  # Yellow
+            elif self.day_count <= 9:
+                difficulty_text = "Hard"
+                difficulty_color = (255, 165, 0)  # Orange
+            else:
+                difficulty_text = "Nightmare"
+                difficulty_color = (255, 0, 0)  # Red
+                
+            difficulty_label = font.render(f"Difficulty: ", True, (255, 255, 255))
+            difficulty_value = font.render(difficulty_text, True, difficulty_color)
+            
+            self.screen.blit(difficulty_label, (self.width - difficulty_label.get_width() - difficulty_value.get_width() - 20, 140))
+            self.screen.blit(difficulty_value, (self.width - difficulty_value.get_width() - 20, 140))
+            
+            # Zombie counter
+            zombie_text = font.render(f"Zombies: {self.zombies_spawned_tonight}/{self.max_zombies_tonight}", True, (255, 255, 255))
+            self.screen.blit(zombie_text, (self.width - zombie_text.get_width() - 20, 180))
         
         # Ammo display
         if self.state == GameState.NIGHT:

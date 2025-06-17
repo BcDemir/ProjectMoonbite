@@ -3,18 +3,9 @@ import random
 import math
 
 class Zombie:
-    def __init__(self, x, y, zombie_type=None):
+    def __init__(self, x, y, zombie_type="normal"):
         self.x = x
         self.y = y
-        
-        # Randomly select zombie type if not specified
-        if zombie_type is None:
-            # 80% common zombies, 20% rare zombies
-            if random.random() < 0.8:
-                zombie_type = random.choice(["normal", "fast"])
-            else:
-                zombie_type = random.choice(["tank", "exploder", "spitter"])
-        
         self.type = zombie_type
         
         # Set attributes based on zombie type
@@ -74,10 +65,44 @@ class Zombie:
         self.projectiles = []
     
     @classmethod
-    def spawn_zombie(cls, screen_width, screen_height):
-        """Create a zombie at the right edge of the screen"""
-        # Randomly determine zombie type based on rarity
-        zombie_type = None  # Will be determined in __init__
+    def spawn_zombie(cls, screen_width, screen_height, difficulty=1):
+        """Create a zombie at the right edge of the screen
+        
+        Args:
+            screen_width: Width of the screen
+            screen_height: Height of the screen
+            difficulty: Day count, affects zombie type probability
+        """
+        # Determine zombie type based on difficulty
+        # As difficulty increases, rare zombies become more common
+        rare_zombie_chance = min(0.1 + (difficulty * 0.03), 0.5)  # Caps at 50% for rare zombies
+        
+        if random.random() < rare_zombie_chance:
+            # Spawn a rare zombie
+            # As difficulty increases, tougher rare zombies become more common
+            if difficulty <= 3:
+                # Early nights: mostly exploders
+                weights = [0.2, 0.7, 0.1]  # tank, exploder, spitter
+            elif difficulty <= 6:
+                # Mid nights: balanced mix
+                weights = [0.3, 0.4, 0.3]  # tank, exploder, spitter
+            else:
+                # Later nights: more tanks and spitters
+                weights = [0.4, 0.2, 0.4]  # tank, exploder, spitter
+                
+            # Choose based on weights
+            r = random.random()
+            if r < weights[0]:
+                zombie_type = "tank"
+            elif r < weights[0] + weights[1]:
+                zombie_type = "exploder"
+            else:
+                zombie_type = "spitter"
+        else:
+            # Spawn a common zombie
+            # As difficulty increases, fast zombies become more common
+            fast_zombie_chance = min(0.3 + (difficulty * 0.05), 0.7)  # Caps at 70% for fast zombies
+            zombie_type = "fast" if random.random() < fast_zombie_chance else "normal"
         
         # Always spawn from right side
         x = screen_width + random.randint(10, 50)

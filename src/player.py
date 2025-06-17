@@ -1,15 +1,17 @@
 import pygame
 import math
+from src.assets import Assets
 
 class Bullet:
-    def __init__(self, x, y, direction):
+    def __init__(self, x, y, direction, damage=10, speed=15, size=3):
         self.x = x
         self.y = y
         self.direction = direction
-        self.speed = 15
-        self.damage = 10  # Reduced damage to make zombies tougher
+        self.speed = speed
+        self.damage = damage
+        self.size = size
         self.active = True
-        self.rect = pygame.Rect(x, y, 5, 5)
+        self.rect = pygame.Rect(x, y, size*2, size*2)
     
     def update(self):
         # Move bullet in direction
@@ -19,7 +21,7 @@ class Bullet:
         self.rect.y = self.y
     
     def render(self, screen):
-        pygame.draw.circle(screen, (255, 255, 0), (int(self.x), int(self.y)), 3)
+        pygame.draw.circle(screen, (255, 255, 0), (int(self.x), int(self.y)), self.size)
 
 class Player:
     def __init__(self, x, y):
@@ -40,20 +42,137 @@ class Player:
         # Combat
         self.health = 100
         self.max_health = 100
-        self.magazine_size = 10  # Bullets per magazine
-        self.magazine_current = 10  # Current bullets in magazine
-        self.ammo_total = 30  # Total ammo (including magazine)
+        
+        # Weapon system
+        self.current_weapon = "pistol"
+        self.has_shotgun = False
+        self.has_rifle = False
+        self.has_machine_gun = False
+        
+        # Weapon stats
+        self.weapon_stats = {
+            "pistol": {
+                "damage": 10,
+                "magazine_size": 10,
+                "reload_time": 60,  # frames
+                "cooldown": 15,     # frames between shots
+                "bullet_speed": 15,
+                "bullet_size": 3
+            },
+            "shotgun": {
+                "damage": 8,
+                "magazine_size": 6,
+                "reload_time": 90,
+                "cooldown": 30,
+                "bullet_speed": 12,
+                "bullet_size": 4,
+                "spread": 5,        # number of pellets
+                "spread_angle": 0.3  # radians
+            },
+            "rifle": {
+                "damage": 25,
+                "magazine_size": 8,
+                "reload_time": 75,
+                "cooldown": 20,
+                "bullet_speed": 20,
+                "bullet_size": 3
+            },
+            "machine_gun": {
+                "damage": 8,
+                "magazine_size": 30,
+                "reload_time": 120,
+                "cooldown": 5,
+                "bullet_speed": 15,
+                "bullet_size": 2
+            }
+        }
+        
+        # Initialize with pistol stats
+        self.bullet_damage = self.weapon_stats["pistol"]["damage"]
+        self.magazine_size = self.weapon_stats["pistol"]["magazine_size"]
+        self.magazine_current = self.magazine_size
+        self.reload_time = self.weapon_stats["pistol"]["reload_time"]
+        self.shoot_cooldown_max = self.weapon_stats["pistol"]["cooldown"]
+        
+        # Ammo
+        self.ammo_total = 30
         self.bullets = []
         self.shoot_cooldown = 0
-        self.shoot_cooldown_max = 10  # frames between shots
         self.reloading = False
-        self.reload_time = 60  # frames to reload (1 second at 60 FPS)
         self.reload_timer = 0
+        
+        # Upgrade levels
+        self.reload_speed_level = 0
+        self.magazine_size_level = 0
+        self.damage_level = 0
+        self.fire_rate_level = 0
         
         # Controls
         self.moving_left = False
         self.moving_right = False
         self.shooting = False
+        
+        # Visual elements
+        self.assets = Assets()
+        self.aim_angle = 0  # Angle in radians
+        self.arm_offset = (20, 30)  # Offset from player center
+        
+        # Animation
+        self.muzzle_flash_active = False
+        self.muzzle_flash_frame = 0
+        self.muzzle_flash_duration = 3  # frames per animation frame
+        self.muzzle_flash_timer = 0
+        self.muzzle_flash_position = (0, 0)
+    
+    def calculate_weapon_tip(self, base_x, base_y):
+        """Calculate the position of the weapon tip based on arm position and aim angle"""
+        arm_length = 20  # Length of arm
+        weapon_length = 30  # Length of weapon barrel
+        
+        # Calculate weapon tip position
+        weapon_tip_x = base_x + math.cos(self.aim_angle) * (arm_length + weapon_length)
+        weapon_tip_y = base_y + math.sin(self.aim_angle) * (arm_length + weapon_length)
+        
+        return weapon_tip_x, weapon_tip_y
+    
+    def switch_weapon(self, weapon_name):
+        """Switch to a different weapon if available"""
+        if weapon_name == "pistol" or \
+           (weapon_name == "shotgun" and self.has_shotgun) or \
+           (weapon_name == "rifle" and self.has_rifle) or \
+           (weapon_name == "machine_gun" and self.has_machine_gun):
+            
+            # Save current magazine for old weapon
+            old_weapon = self.current_weapon
+            
+            # Switch weapon
+            self.current_weapon = weapon_name
+            
+            # Update weapon stats
+            stats = self.weapon_stats[weapon_name]
+            self.bullet_damage = stats["damage"]
+            self.magazine_size = stats["magazine_size"]
+            
+            # Apply upgrades
+            if self.magazine_size_level > 0:
+                self.magazine_size += self.magazine_size_level * 2
+            
+            self.magazine_current = min(self.magazine_size, self.ammo_total)
+            self.reload_time = stats["reload_time"]
+            
+            # Apply reload speed upgrade
+            if self.reload_speed_level > 0:
+                self.reload_time *= (1 - 0.15 * self.reload_speed_level)
+            
+            self.shoot_cooldown_max = stats["cooldown"]
+            
+            # Apply fire rate upgrade
+            if self.fire_rate_level > 0:
+                self.shoot_cooldown_max *= (1 - 0.15 * self.fire_rate_level)
+            
+            return True
+        
+        return False
     
     def handle_event(self, event):
         if event.type == pygame.KEYDOWN:
@@ -65,6 +184,16 @@ class Player:
                 self.jump()
             if event.key == pygame.K_r and not self.reloading and self.magazine_current < self.magazine_size:
                 self.start_reload()
+            
+            # Weapon switching
+            if event.key == pygame.K_1:
+                self.switch_weapon("pistol")
+            if event.key == pygame.K_2 and self.has_shotgun:
+                self.switch_weapon("shotgun")
+            if event.key == pygame.K_3 and self.has_rifle:
+                self.switch_weapon("rifle")
+            if event.key == pygame.K_4 and self.has_machine_gun:
+                self.switch_weapon("machine_gun")
         
         if event.type == pygame.KEYUP:
             if event.key == pygame.K_a:
@@ -116,6 +245,13 @@ class Player:
         
         self.y = self.rect.y
         
+        # Update aim angle based on mouse position
+        mouse_x, mouse_y = pygame.mouse.get_pos()
+        # Calculate direction to mouse from player center
+        dx = mouse_x - self.rect.centerx
+        dy = mouse_y - self.rect.centery
+        self.aim_angle = math.atan2(dy, dx)
+        
         # Check for resource collisions
         collected_resources = world.check_resource_collisions(self.rect)
         for resource_type in collected_resources:
@@ -147,6 +283,16 @@ class Player:
             if (bullet.x < 0 or bullet.x > world.width or 
                 bullet.y < 0 or bullet.y > world.height):
                 self.bullets.remove(bullet)
+        
+        # Update muzzle flash animation
+        if self.muzzle_flash_active:
+            self.muzzle_flash_timer += 1
+            if self.muzzle_flash_timer >= self.muzzle_flash_duration:
+                self.muzzle_flash_timer = 0
+                self.muzzle_flash_frame += 1
+                if self.muzzle_flash_frame >= 3:  # 3 frames of animation
+                    self.muzzle_flash_active = False
+                    self.muzzle_flash_frame = 0
     
     def jump(self):
         self.velocity_y = -self.jump_power
@@ -161,9 +307,57 @@ class Player:
         dy = mouse_y - (self.rect.centery)
         direction = math.atan2(dy, dx)
         
-        # Create bullet
-        bullet = Bullet(self.rect.centerx, self.rect.centery, direction)
-        self.bullets.append(bullet)
+        # Update aim angle
+        self.aim_angle = direction
+        
+        # Get weapon stats
+        stats = self.weapon_stats[self.current_weapon]
+        damage = stats["damage"]
+        
+        # Apply damage upgrade
+        if self.damage_level > 0:
+            damage *= (1 + 0.2 * self.damage_level)
+        
+        # Calculate arm position (matching the render method)
+        arm_x = self.rect.centerx
+        arm_y = self.rect.centery - 10  # Slightly above center
+        
+        # Calculate weapon tip position (where bullets spawn)
+        weapon_tip_x, weapon_tip_y = self.calculate_weapon_tip(arm_x, arm_y)
+        
+        # Set muzzle flash position
+        self.muzzle_flash_position = (weapon_tip_x, weapon_tip_y)
+        self.muzzle_flash_active = True
+        self.muzzle_flash_frame = 0
+        
+        # Play sound effect
+        self.assets.play_sound(self.current_weapon)
+        
+        # Create bullet(s) based on weapon type
+        if self.current_weapon == "shotgun":
+            # Create multiple pellets with spread
+            for i in range(stats["spread"]):
+                spread_direction = direction - stats["spread_angle"]/2 + stats["spread_angle"] * i/(stats["spread"]-1)
+                bullet = Bullet(
+                    weapon_tip_x, 
+                    weapon_tip_y, 
+                    spread_direction,
+                    damage=damage,
+                    speed=stats["bullet_speed"],
+                    size=stats["bullet_size"]
+                )
+                self.bullets.append(bullet)
+        else:
+            # Create a single bullet
+            bullet = Bullet(
+                weapon_tip_x, 
+                weapon_tip_y, 
+                direction,
+                damage=damage,
+                speed=stats["bullet_speed"],
+                size=stats["bullet_size"]
+            )
+            self.bullets.append(bullet)
         
         # Apply cooldown and use ammo
         self.shoot_cooldown = self.shoot_cooldown_max
@@ -176,6 +370,7 @@ class Player:
         
         self.reloading = True
         self.reload_timer = 0
+        self.assets.play_sound("reload")
     
     def finish_reload(self):
         """Complete the reload process"""
@@ -184,8 +379,7 @@ class Player:
         
         # Calculate how many bullets to add to magazine
         bullets_needed = self.magazine_size - self.magazine_current
-        bullets_available = self.ammo_total - self.magazine_current
-        bullets_to_add = min(bullets_needed, bullets_available)
+        bullets_to_add = min(bullets_needed, self.ammo_total)
         
         # Add bullets to magazine and subtract from total
         self.magazine_current += bullets_to_add
@@ -234,10 +428,48 @@ class Player:
             else:
                 pygame.draw.rect(screen, (0, 0, 200), player_rect)
             
+            # Get arm and weapon images
+            rotated_arm, rotated_weapon = self.assets.get_rotated_arm_and_weapon(self.current_weapon, self.aim_angle)
+            
+            # Calculate arm position
+            arm_x = player_rect.centerx
+            arm_y = player_rect.centery - 10  # Slightly above center
+            
+            # Draw arm
+            arm_rect = rotated_arm.get_rect(center=(arm_x, arm_y))
+            screen.blit(rotated_arm, arm_rect)
+            
+            # Draw weapon
+            weapon_offset_x = math.cos(self.aim_angle) * 20
+            weapon_offset_y = math.sin(self.aim_angle) * 20
+            weapon_rect = rotated_weapon.get_rect(center=(arm_x + weapon_offset_x, arm_y + weapon_offset_y))
+            screen.blit(rotated_weapon, weapon_rect)
+            
+            # Draw muzzle flash if active
+            if self.muzzle_flash_active:
+                flash = self.assets.get_muzzle_flash(self.muzzle_flash_frame)
+                if flash:
+                    # Calculate muzzle position (at the tip of the weapon)
+                    weapon_tip_x, weapon_tip_y = self.calculate_weapon_tip(arm_x, arm_y)
+                    flash_rect = flash.get_rect(center=(weapon_tip_x, weapon_tip_y))
+                    screen.blit(flash, flash_rect)
+            
+            # Draw weapon indicator
+            weapon_color = (255, 255, 0)  # Yellow for pistol
+            if self.current_weapon == "shotgun":
+                weapon_color = (255, 165, 0)  # Orange
+            elif self.current_weapon == "rifle":
+                weapon_color = (0, 255, 0)  # Green
+            elif self.current_weapon == "machine_gun":
+                weapon_color = (255, 0, 0)  # Red
+            
+            pygame.draw.circle(screen, weapon_color, 
+                              (player_rect.centerx, player_rect.centery), 5)
+            
             # Draw bullets
             for bullet in self.bullets:
                 bullet_x, bullet_y = camera.apply_point(bullet.x, bullet.y)
-                pygame.draw.circle(screen, (255, 255, 0), (int(bullet_x), int(bullet_y)), 3)
+                pygame.draw.circle(screen, (255, 255, 0), (int(bullet_x), int(bullet_y)), bullet.size)
             
             # Draw reloading indicator if reloading
             if self.reloading:
@@ -255,9 +487,47 @@ class Player:
             else:
                 pygame.draw.rect(screen, (0, 0, 200), self.rect)
             
+            # Get arm and weapon images
+            rotated_arm, rotated_weapon = self.assets.get_rotated_arm_and_weapon(self.current_weapon, self.aim_angle)
+            
+            # Calculate arm position
+            arm_x = self.rect.centerx
+            arm_y = self.rect.centery - 10  # Slightly above center
+            
+            # Draw arm
+            arm_rect = rotated_arm.get_rect(center=(arm_x, arm_y))
+            screen.blit(rotated_arm, arm_rect)
+            
+            # Draw weapon
+            weapon_offset_x = math.cos(self.aim_angle) * 20
+            weapon_offset_y = math.sin(self.aim_angle) * 20
+            weapon_rect = rotated_weapon.get_rect(center=(arm_x + weapon_offset_x, arm_y + weapon_offset_y))
+            screen.blit(rotated_weapon, weapon_rect)
+            
+            # Draw muzzle flash if active
+            if self.muzzle_flash_active:
+                flash = self.assets.get_muzzle_flash(self.muzzle_flash_frame)
+                if flash:
+                    # Calculate muzzle position (at the tip of the weapon)
+                    weapon_tip_x, weapon_tip_y = self.calculate_weapon_tip(arm_x, arm_y)
+                    flash_rect = flash.get_rect(center=(weapon_tip_x, weapon_tip_y))
+                    screen.blit(flash, flash_rect)
+            
+            # Draw weapon indicator
+            weapon_color = (255, 255, 0)  # Yellow for pistol
+            if self.current_weapon == "shotgun":
+                weapon_color = (255, 165, 0)  # Orange
+            elif self.current_weapon == "rifle":
+                weapon_color = (0, 255, 0)  # Green
+            elif self.current_weapon == "machine_gun":
+                weapon_color = (255, 0, 0)  # Red
+            
+            pygame.draw.circle(screen, weapon_color, 
+                              (self.rect.centerx, self.rect.centery), 5)
+            
             # Draw bullets
             for bullet in self.bullets:
-                pygame.draw.circle(screen, (255, 255, 0), (int(bullet.x), int(bullet.y)), 3)
+                pygame.draw.circle(screen, (255, 255, 0), (int(bullet.x), int(bullet.y)), bullet.size)
             
             # Draw reloading indicator if reloading
             if self.reloading:
