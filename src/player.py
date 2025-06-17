@@ -40,11 +40,15 @@ class Player:
         # Combat
         self.health = 100
         self.max_health = 100
-        self.ammo = 30
-        self.max_ammo = 30
+        self.magazine_size = 10  # Bullets per magazine
+        self.magazine_current = 10  # Current bullets in magazine
+        self.ammo_total = 30  # Total ammo (including magazine)
         self.bullets = []
         self.shoot_cooldown = 0
         self.shoot_cooldown_max = 10  # frames between shots
+        self.reloading = False
+        self.reload_time = 60  # frames to reload (1 second at 60 FPS)
+        self.reload_timer = 0
         
         # Controls
         self.moving_left = False
@@ -59,8 +63,8 @@ class Player:
                 self.moving_right = True
             if event.key == pygame.K_SPACE and self.on_ground:
                 self.jump()
-            if event.key == pygame.K_r:
-                self.reload()
+            if event.key == pygame.K_r and not self.reloading and self.magazine_current < self.magazine_size:
+                self.start_reload()
         
         if event.type == pygame.KEYUP:
             if event.key == pygame.K_a:
@@ -112,8 +116,14 @@ class Player:
         self.x = self.rect.x
         self.y = self.rect.y
         
+        # Handle reloading
+        if self.reloading:
+            self.reload_timer += 1
+            if self.reload_timer >= self.reload_time:
+                self.finish_reload()
+        
         # Handle shooting
-        if self.shooting and self.shoot_cooldown <= 0 and self.ammo > 0:
+        if self.shooting and self.shoot_cooldown <= 0 and self.magazine_current > 0 and not self.reloading:
             self.shoot()
         
         if self.shoot_cooldown > 0:
@@ -146,10 +156,38 @@ class Player:
         
         # Apply cooldown and use ammo
         self.shoot_cooldown = self.shoot_cooldown_max
-        self.ammo -= 1
+        self.magazine_current -= 1
+    
+    def start_reload(self):
+        """Start the reload process"""
+        if self.reloading or self.magazine_current >= self.magazine_size or self.ammo_total <= self.magazine_current:
+            return  # Already reloading, magazine full, or no ammo to reload
+        
+        self.reloading = True
+        self.reload_timer = 0
+    
+    def finish_reload(self):
+        """Complete the reload process"""
+        if not self.reloading:
+            return
+        
+        # Calculate how many bullets to add to magazine
+        bullets_needed = self.magazine_size - self.magazine_current
+        bullets_available = self.ammo_total - self.magazine_current
+        bullets_to_add = min(bullets_needed, bullets_available)
+        
+        self.magazine_current += bullets_to_add
+        self.reloading = False
+        self.reload_timer = 0
     
     def reload(self):
-        self.ammo = self.max_ammo
+        """Instantly reload (for compatibility with existing code)"""
+        self.start_reload()
+        self.finish_reload()
+    
+    def add_ammo(self, amount):
+        """Add ammo to total supply"""
+        self.ammo_total += amount
     
     def take_damage(self, amount):
         self.health -= amount
@@ -174,3 +212,12 @@ class Player:
         # Draw bullets
         for bullet in self.bullets:
             bullet.render(screen)
+        
+        # Draw reloading indicator if reloading
+        if self.reloading:
+            # Draw a circular progress indicator above player
+            progress = self.reload_timer / self.reload_time
+            radius = 15
+            pygame.draw.arc(screen, (255, 255, 0), 
+                           (self.rect.centerx - radius, self.rect.top - radius*2, radius*2, radius*2),
+                           0, progress * 2 * math.pi, 3)

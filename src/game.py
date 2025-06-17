@@ -5,6 +5,7 @@ from src.player import Player
 from src.zombie import Zombie
 from src.resource import Resource
 from src.world import World
+from src.city_map import CityMap
 
 class GameState(Enum):
     DAY = 1
@@ -166,7 +167,10 @@ class Game:
         # Clear resources
         self.resources.clear()
         # Player prepares defenses
-        self.player.reload()
+        self.player.magazine_current = self.player.magazine_size
+        # Make sure player has at least some ammo
+        if self.player.ammo_total < self.player.magazine_size * 2:
+            self.player.ammo_total = self.player.magazine_size * 2
     
     def render(self):
         # Clear screen
@@ -242,10 +246,13 @@ class Game:
     def render_ui(self):
         # Draw UI elements like health, ammo, day/night indicator
         font = pygame.font.SysFont(None, 36)
+        small_font = pygame.font.SysFont(None, 24)
         
         # Health bar
         pygame.draw.rect(self.screen, (255, 0, 0), (20, 20, 200, 20))
         pygame.draw.rect(self.screen, (0, 255, 0), (20, 20, self.player.health * 2, 20))
+        health_text = small_font.render(f"Health: {self.player.health}/{self.player.max_health}", True, (255, 255, 255))
+        self.screen.blit(health_text, (25, 22))
         
         # Day/Night indicator
         if self.state == GameState.DAY:
@@ -261,6 +268,34 @@ class Game:
         
         self.screen.blit(score_text, (self.width - score_text.get_width() - 20, 20))
         self.screen.blit(resources_text, (self.width - resources_text.get_width() - 20, 60))
+        
+        # Ammo display
+        if self.state == GameState.NIGHT:
+            # Draw magazine indicator
+            mag_x = 20
+            mag_y = 100
+            mag_width = 150
+            mag_height = 30
+            
+            # Magazine background
+            pygame.draw.rect(self.screen, (50, 50, 50), (mag_x, mag_y, mag_width, mag_height))
+            
+            # Current bullets in magazine
+            bullet_width = mag_width / self.player.magazine_size
+            for i in range(self.player.magazine_current):
+                pygame.draw.rect(self.screen, (255, 255, 0), 
+                                (mag_x + i * bullet_width, mag_y, bullet_width - 2, mag_height))
+            
+            # Magazine border
+            pygame.draw.rect(self.screen, (200, 200, 200), (mag_x, mag_y, mag_width, mag_height), 2)
+            
+            # Ammo text
+            if self.player.reloading:
+                ammo_text = font.render("RELOADING...", True, (255, 255, 0))
+            else:
+                ammo_text = font.render(f"Ammo: {self.player.magazine_current}/{self.player.ammo_total}", True, (255, 255, 255))
+            
+            self.screen.blit(ammo_text, (mag_x, mag_y + mag_height + 10))
     
     def run(self):
         # Main game loop
