@@ -7,7 +7,7 @@ class Bullet:
         self.y = y
         self.direction = direction
         self.speed = 15
-        self.damage = 25
+        self.damage = 10  # Reduced damage to make zombies tougher
         self.active = True
         self.rect = pygame.Rect(x, y, 5, 5)
     
@@ -80,7 +80,7 @@ class Player:
             if event.button == 1:  # Left mouse button
                 self.shooting = False
     
-    def update(self):
+    def update(self, world):
         # Reset movement
         dx = 0
         
@@ -94,27 +94,38 @@ class Player:
         
         # Apply gravity
         self.velocity_y += self.gravity
-        dy = self.velocity_y
+        if self.velocity_y > 15:  # Terminal velocity
+            self.velocity_y = 15
         
-        # Ensure player stays on screen
+        # Check for horizontal collisions with world boundaries
         if self.rect.left + dx < 0:
             dx = -self.rect.left
-        if self.rect.right + dx > 1024:  # Assuming screen width is 1024
-            dx = 1024 - self.rect.right
+        if self.rect.right + dx > world.width:  # Use world width instead of screen width
+            dx = world.width - self.rect.right
         
-        # Simple ground collision (assuming ground is at y=700)
-        if self.rect.bottom + dy > 700:
-            dy = 700 - self.rect.bottom
-            self.velocity_y = 0
-            self.on_ground = True
-        else:
-            self.on_ground = False
-        
-        # Update position
+        # Update horizontal position
         self.rect.x += dx
-        self.rect.y += dy
         self.x = self.rect.x
+        
+        # Check for vertical collisions with platforms
+        self.rect.y, self.on_ground = world.check_platform_collisions(self.rect, self.velocity_y)
+        
+        # Reset velocity if on ground
+        if self.on_ground:
+            self.velocity_y = 0
+        
         self.y = self.rect.y
+        
+        # Check for resource collisions
+        collected_resources = world.check_resource_collisions(self.rect)
+        for resource_type in collected_resources:
+            if resource_type == "ammo":
+                self.ammo_total += 10
+            elif resource_type == "health":
+                self.health = min(self.max_health, self.health + 25)
+            elif resource_type == "weapon":
+                # Could implement weapon upgrades here
+                self.ammo_total += 20
         
         # Handle reloading
         if self.reloading:
@@ -132,9 +143,9 @@ class Player:
         # Update bullets
         for bullet in self.bullets[:]:
             bullet.update()
-            # Remove bullets that go off screen
-            if (bullet.x < 0 or bullet.x > 1024 or 
-                bullet.y < 0 or bullet.y > 768):
+            # Remove bullets that go off screen or out of world bounds
+            if (bullet.x < 0 or bullet.x > world.width or 
+                bullet.y < 0 or bullet.y > world.height):
                 self.bullets.remove(bullet)
     
     def jump(self):
@@ -160,7 +171,7 @@ class Player:
     
     def start_reload(self):
         """Start the reload process"""
-        if self.reloading or self.magazine_current >= self.magazine_size or self.ammo_total <= self.magazine_current:
+        if self.reloading or self.magazine_current >= self.magazine_size or self.ammo_total <= 0:
             return  # Already reloading, magazine full, or no ammo to reload
         
         self.reloading = True
@@ -176,14 +187,25 @@ class Player:
         bullets_available = self.ammo_total - self.magazine_current
         bullets_to_add = min(bullets_needed, bullets_available)
         
+        # Add bullets to magazine and subtract from total
         self.magazine_current += bullets_to_add
+        self.ammo_total -= bullets_to_add
+        
         self.reloading = False
         self.reload_timer = 0
     
     def reload(self):
         """Instantly reload (for compatibility with existing code)"""
-        self.start_reload()
-        self.finish_reload()
+        if self.magazine_current >= self.magazine_size or self.ammo_total <= 0:
+            return
+            
+        # Calculate how many bullets to add to magazine
+        bullets_needed = self.magazine_size - self.magazine_current
+        bullets_to_add = min(bullets_needed, self.ammo_total)
+        
+        # Add bullets to magazine and subtract from total
+        self.magazine_current += bullets_to_add
+        self.ammo_total -= bullets_to_add
     
     def add_ammo(self, amount):
         """Add ammo to total supply"""
@@ -202,22 +224,46 @@ class Player:
                 return True
         return False
     
-    def render(self, screen):
-        # Draw player
-        if self.facing_right:
-            pygame.draw.rect(screen, (0, 0, 255), self.rect)
+    def render(self, screen, camera=None):
+        # If camera is provided (day mode), apply camera offset
+        if camera:
+            # Draw player
+            player_rect = camera.apply(self.rect)
+            if self.facing_right:
+                pygame.draw.rect(screen, (0, 0, 255), player_rect)
+            else:
+                pygame.draw.rect(screen, (0, 0, 200), player_rect)
+            
+            # Draw bullets
+            for bullet in self.bullets:
+                bullet_x, bullet_y = camera.apply_point(bullet.x, bullet.y)
+                pygame.draw.circle(screen, (255, 255, 0), (int(bullet_x), int(bullet_y)), 3)
+            
+            # Draw reloading indicator if reloading
+            if self.reloading:
+                # Draw a circular progress indicator above player
+                progress = self.reload_timer / self.reload_time
+                radius = 15
+                pygame.draw.arc(screen, (255, 255, 0), 
+                               (player_rect.centerx - radius, player_rect.top - radius*2, radius*2, radius*2),
+                               0, progress * 2 * math.pi, 3)
         else:
-            pygame.draw.rect(screen, (0, 0, 200), self.rect)
-        
-        # Draw bullets
-        for bullet in self.bullets:
-            bullet.render(screen)
-        
-        # Draw reloading indicator if reloading
-        if self.reloading:
-            # Draw a circular progress indicator above player
-            progress = self.reload_timer / self.reload_time
-            radius = 15
-            pygame.draw.arc(screen, (255, 255, 0), 
-                           (self.rect.centerx - radius, self.rect.top - radius*2, radius*2, radius*2),
-                           0, progress * 2 * math.pi, 3)
+            # Night mode - no camera offset
+            # Draw player
+            if self.facing_right:
+                pygame.draw.rect(screen, (0, 0, 255), self.rect)
+            else:
+                pygame.draw.rect(screen, (0, 0, 200), self.rect)
+            
+            # Draw bullets
+            for bullet in self.bullets:
+                pygame.draw.circle(screen, (255, 255, 0), (int(bullet.x), int(bullet.y)), 3)
+            
+            # Draw reloading indicator if reloading
+            if self.reloading:
+                # Draw a circular progress indicator above player
+                progress = self.reload_timer / self.reload_time
+                radius = 15
+                pygame.draw.arc(screen, (255, 255, 0), 
+                               (self.rect.centerx - radius, self.rect.top - radius*2, radius*2, radius*2),
+                               0, progress * 2 * math.pi, 3)
