@@ -1,4 +1,5 @@
 import pygame
+import random
 
 class Barricade:
     def __init__(self, x, y, width, height):
@@ -32,6 +33,8 @@ class Barricade:
                 "rect": pygame.Rect(x, y + i * section_height, width, section_height),
                 "damage": 0  # 0-100% damage per section
             })
+        
+        print(f"Barricade created at x={x}, y={y}, width={width}, height={height}")
     
     def take_damage(self, amount):
         """Apply damage to the barricade"""
@@ -76,15 +79,40 @@ class Barricade:
         return False
     
     def render(self, screen):
+        # Update rect position to match x,y attributes
+        self.rect.x = self.x
+        self.rect.y = self.y
+        
+        # If barricade is destroyed, render broken pieces
+        if self.is_destroyed():
+            # Draw broken barricade pieces
+            for i in range(5):
+                # Calculate random positions for debris
+                x = self.rect.x + random.randint(-20, self.width + 20)
+                y = self.rect.y + random.randint(0, self.height)
+                width = random.randint(10, 30)
+                height = random.randint(5, 15)
+                
+                # Draw debris piece
+                debris_rect = pygame.Rect(x, y, width, height)
+                pygame.draw.rect(screen, (100, 70, 30), debris_rect)
+            
+            return
+        
         # Draw base barricade
         pygame.draw.rect(screen, self.base_color, self.rect)
         
         # Draw sections with damage
-        for section in self.sections:
+        for i, section in enumerate(self.sections):
+            # Update section rect position
+            section["rect"].x = self.x
+            section["rect"].y = self.y + (i * (self.height // 10))
+            
             if section["damage"] > 0:
                 # Calculate color based on damage
                 damage_index = min(3, int(section["damage"] / 25))
                 color = self.damage_colors[damage_index]
+                pygame.draw.rect(screen, color, section["rect"])
                 
                 # Draw damage overlay
                 damage_rect = section["rect"].copy()

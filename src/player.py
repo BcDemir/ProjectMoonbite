@@ -1,5 +1,6 @@
 import pygame
 import math
+import random
 from src.assets import Assets
 
 class Bullet:
@@ -57,7 +58,9 @@ class Player:
                 "reload_time": 60,  # frames
                 "cooldown": 15,     # frames between shots
                 "bullet_speed": 15,
-                "bullet_size": 3
+                "bullet_size": 3,
+                "base_accuracy": 0.85,  # Base accuracy (0-1)
+                "accuracy_dropoff": 0.4  # How much accuracy drops at max distance
             },
             "shotgun": {
                 "damage": 8,
@@ -67,7 +70,9 @@ class Player:
                 "bullet_speed": 12,
                 "bullet_size": 4,
                 "spread": 5,        # number of pellets
-                "spread_angle": 0.3  # radians
+                "spread_angle": 0.3,  # radians
+                "base_accuracy": 0.7,  # Lower base accuracy
+                "accuracy_dropoff": 0.6  # Severe accuracy drop at range
             },
             "rifle": {
                 "damage": 25,
@@ -75,7 +80,9 @@ class Player:
                 "reload_time": 75,
                 "cooldown": 20,
                 "bullet_speed": 20,
-                "bullet_size": 3
+                "bullet_size": 3,
+                "base_accuracy": 0.95,  # High base accuracy
+                "accuracy_dropoff": 0.2  # Minimal accuracy drop at range
             },
             "machine_gun": {
                 "damage": 8,
@@ -83,7 +90,9 @@ class Player:
                 "reload_time": 120,
                 "cooldown": 5,
                 "bullet_speed": 15,
-                "bullet_size": 2
+                "bullet_size": 2,
+                "base_accuracy": 0.75,  # Lower accuracy due to rapid fire
+                "accuracy_dropoff": 0.5  # Significant accuracy drop at range
             }
         }
         
@@ -205,21 +214,26 @@ class Player:
         if event.type == pygame.MOUSEBUTTONDOWN:
             if event.button == 1:  # Left mouse button
                 self.shooting = True
+                # Return a signal that shooting has started
+                return "shooting_started"
         if event.type == pygame.MOUSEBUTTONUP:
             if event.button == 1:  # Left mouse button
                 self.shooting = False
+                
+        return None
     
-    def update(self, world):
+    def update(self, world, allow_movement=True):
         # Reset movement
         dx = 0
         
-        # Apply movement based on controls
-        if self.moving_left:
-            dx = -self.speed
-            self.facing_right = False
-        if self.moving_right:
-            dx = self.speed
-            self.facing_right = True
+        # Apply movement based on controls if movement is allowed
+        if allow_movement:
+            if self.moving_left:
+                dx = -self.speed
+                self.facing_right = False
+            if self.moving_right:
+                dx = self.speed
+                self.facing_right = True
         
         # Apply gravity
         self.velocity_y += self.gravity
@@ -271,7 +285,7 @@ class Player:
         
         # Handle shooting
         if self.shooting and self.shoot_cooldown <= 0 and self.magazine_current > 0 and not self.reloading:
-            self.shoot()
+            self.shoot()  # Always allow shooting regardless of movement
         
         if self.shoot_cooldown > 0:
             self.shoot_cooldown -= 1
@@ -298,14 +312,56 @@ class Player:
         self.velocity_y = -self.jump_power
         self.on_ground = False
     
+    def get_accuracy(self, distance):
+        """Calculate accuracy based on weapon and distance"""
+        # Get weapon stats
+        stats = self.weapon_stats[self.current_weapon]
+        
+        # Get base accuracy for current weapon
+        base_accuracy = stats.get("base_accuracy", 0.8)
+        accuracy_dropoff = stats.get("accuracy_dropoff", 0.4)
+        
+        # Adjust for distance
+        max_accurate_distance = {
+            "pistol": 300,
+            "shotgun": 150,
+            "rifle": 500,
+            "smg": 250,
+            "machine_gun": 250
+        }
+        
+        # Get max accurate distance for current weapon
+        max_dist = max_accurate_distance.get(self.current_weapon, 300)
+        
+        # Calculate distance penalty
+        if distance > max_dist:
+            # Accuracy drops off after max distance
+            distance_factor = min(1.0, max_dist / distance)
+            # Apply accuracy dropoff based on weapon type
+            accuracy = base_accuracy - ((1.0 - distance_factor) * accuracy_dropoff)
+        else:
+            # Within effective range, use base accuracy
+            accuracy = base_accuracy
+        
+        # Apply accuracy upgrade if player has it
+        if hasattr(self, 'accuracy_level') and self.accuracy_level > 0:
+            # Each level improves accuracy by 5% (up to maximum of 1.0)
+            accuracy = min(1.0, accuracy + (0.05 * self.accuracy_level))
+        
+        return max(0.3, accuracy)  # Minimum accuracy of 30%
+    
     def shoot(self):
-        # Get mouse position for aiming
+        # Get mouse position for aiming (this is the crosshair center)
         mouse_x, mouse_y = pygame.mouse.get_pos()
         
-        # Calculate direction
+        # Calculate direction and distance to mouse/crosshair
         dx = mouse_x - (self.rect.centerx)
         dy = mouse_y - (self.rect.centery)
+        distance = math.sqrt(dx*dx + dy*dy)
         direction = math.atan2(dy, dx)
+        
+        # Calculate accuracy based on distance
+        accuracy = self.get_accuracy(distance)
         
         # Update aim angle
         self.aim_angle = direction
@@ -333,29 +389,54 @@ class Player:
         # Play sound effect
         self.assets.play_sound(self.current_weapon)
         
+        # Calculate inaccuracy angle based on accuracy
+        max_inaccuracy = (1.0 - accuracy) * 0.2  # Up to 0.2 radians (about 11.5 degrees) of inaccuracy at lowest accuracy
+        
         # Create bullet(s) based on weapon type
         if self.current_weapon == "shotgun":
             # Create multiple pellets with spread
             for i in range(stats["spread"]):
+                # Base spread for shotgun
                 spread_direction = direction - stats["spread_angle"]/2 + stats["spread_angle"] * i/(stats["spread"]-1)
-                bullet = Bullet(
+                
+                # Add additional random spread based on accuracy
+                if accuracy < 1.0:
+                    # More random spread for shotgun
+                    random_spread = random.uniform(-max_inaccuracy * 1.5, max_inaccuracy * 1.5)
+                    spread_direction += random_spread
+                
+                # Calculate bullet direction to hit the crosshair center
+                # This adjusts the trajectory based on the weapon tip position
+                bullet = self.create_bullet_aimed_at_target(
                     weapon_tip_x, 
-                    weapon_tip_y, 
+                    weapon_tip_y,
+                    mouse_x,
+                    mouse_y,
                     spread_direction,
-                    damage=damage,
-                    speed=stats["bullet_speed"],
-                    size=stats["bullet_size"]
+                    damage,
+                    stats["bullet_speed"],
+                    stats["bullet_size"]
                 )
                 self.bullets.append(bullet)
         else:
-            # Create a single bullet
-            bullet = Bullet(
+            # Create a single bullet with accuracy-based spread
+            actual_direction = direction
+            
+            # Add random spread based on accuracy
+            if accuracy < 1.0:
+                random_spread = random.uniform(-max_inaccuracy, max_inaccuracy)
+                actual_direction += random_spread
+            
+            # Calculate bullet direction to hit the crosshair center
+            bullet = self.create_bullet_aimed_at_target(
                 weapon_tip_x, 
-                weapon_tip_y, 
-                direction,
-                damage=damage,
-                speed=stats["bullet_speed"],
-                size=stats["bullet_size"]
+                weapon_tip_y,
+                mouse_x,
+                mouse_y,
+                actual_direction,
+                damage,
+                stats["bullet_speed"],
+                stats["bullet_size"]
             )
             self.bullets.append(bullet)
         
@@ -537,3 +618,53 @@ class Player:
                 pygame.draw.arc(screen, (255, 255, 0), 
                                (self.rect.centerx - radius, self.rect.top - radius*2, radius*2, radius*2),
                                0, progress * 2 * math.pi, 3)
+    def create_bullet_aimed_at_target(self, start_x, start_y, target_x, target_y, base_direction, damage, speed, size):
+        """Create a bullet that will hit the target point, accounting for the offset start position"""
+        # Calculate the exact direction from the weapon tip to the target (crosshair center)
+        dx = target_x - start_x
+        dy = target_y - start_y
+        exact_direction = math.atan2(dy, dx)
+        
+        # Use the exact direction for the bullet trajectory
+        # This ensures the bullet will hit exactly where the crosshair is
+        # The base_direction parameter is used for applying spread/inaccuracy
+        
+        # Calculate final direction by applying spread to the exact direction
+        spread_offset = base_direction - math.atan2(target_y - self.rect.centery, target_x - self.rect.centerx)
+        final_direction = exact_direction + spread_offset
+        
+        # Create the bullet with the adjusted direction
+        return Bullet(
+            start_x,
+            start_y,
+            final_direction,
+            damage=damage,
+            speed=speed,
+            size=size
+        )
+    def reset_position(self, x, y):
+        """Reset player position to the specified coordinates"""
+        self.x = x
+        self.y = y
+        self.rect.x = x
+        self.rect.y = y
+        self.velocity_y = 0
+        self.on_ground = False
+    def update_bullets(self, zombies):
+        """Update bullets and check for collisions with zombies"""
+        # Update each bullet
+        for bullet in self.bullets[:]:
+            bullet.update()
+            
+            # Check for collisions with zombies
+            hit = False
+            for zombie in zombies[:]:
+                if bullet.rect.colliderect(zombie.rect):
+                    zombie.take_damage(bullet.damage)
+                    self.bullets.remove(bullet)
+                    hit = True
+                    break
+            
+            # Remove bullets that go off screen
+            if not hit and (bullet.x < 0 or bullet.x > 2000 or bullet.y < 0 or bullet.y > 1000):
+                self.bullets.remove(bullet)

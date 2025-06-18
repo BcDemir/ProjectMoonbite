@@ -60,15 +60,11 @@ class Game:
         # Resources
         self.resources = 0
         
-        # Initialize game objects
+        # Game objects
         self.world = World(self.width, self.height)
         self.player = Player(self.width // 2, self.height - 200)
         self.zombies = []
-        
-        # Position barricade at the bottom left for night defense
-        barricade_x = 200  # Left side of screen
-        barricade_y = self.height - 200
-        self.barricade = Barricade(barricade_x, barricade_y, 30, 200)
+        self.barricade = Barricade(200, self.height - 200, 30, 200)
         self.explosions = []
         
         # Camera system
@@ -98,11 +94,9 @@ class Game:
         
         # Load assets
         self.load_assets()
-        
     def load_assets(self):
         # Load game assets
         # In a real implementation, you would load more assets here
-        pass
     
     def load_music(self):
         """Load music files for different game states"""
@@ -270,29 +264,10 @@ class Game:
         self.world.update()
         
         # Update player
-        self.player.update(self.world)
-        
-        # Check for resource collection - FIXED VERSION
-        collected_resources = self.world.check_resource_collisions(self.player.rect)
-        if collected_resources:
-            print(f"Resources before collection: {self.resources}")
-            
-        for resource_type in collected_resources:
-            old_resources = self.resources
-            if resource_type == "ammo":
-                self.player.add_ammo(10)
-                self.resources = old_resources + 2  # Force direct assignment
-                print(f"Collected ammo: +2 resources, total now: {self.resources}")
-            elif resource_type == "health":
-                self.player.take_damage(-20)  # Heal by 20
-                self.resources = old_resources + 3  # Force direct assignment
-                print(f"Collected health: +3 resources, total now: {self.resources}")
-            elif resource_type == "weapon":
-                self.resources = old_resources + 5  # Force direct assignment
-                print(f"Collected weapon: +5 resources, total now: {self.resources}")
+        self.player.update()
         
         # Update camera to follow player
-        self.camera.update(self.player.rect.centerx)
+        self.camera.update(self.player.rect)
         
         # Update cycle timer
         self.cycle_timer += 1/60  # Assuming 60 FPS
@@ -306,74 +281,24 @@ class Game:
         # Play nighttime music
         self.play_music("night")
         
-        # Update player (but don't allow movement unless barricade is destroyed)
+        # Allow player movement if barricade is destroyed
         if self.barricade.is_destroyed():
-            self.player.update(self.world, allow_movement=True)
-        else:
-            # Still update player for shooting, but don't allow movement
-            self.player.update(self.world, allow_movement=False)
+            self.player.update()
         
         # Update zombies
         for zombie in list(self.zombies):
-            # Update zombie position and state
             zombie.update(self.player, self.barricade)
             
-            # Check if zombie is in attacking state for barricade
-            if not self.barricade.is_destroyed() and zombie.state == "attacking_barricade":
+            # Check if zombie reached barricade
+            if not self.barricade.is_destroyed() and zombie.rect.colliderect(self.barricade.rect):
                 zombie.attack_barricade(self.barricade)
             
             # Check if zombie reached player
             if zombie.rect.colliderect(self.player.rect):
                 zombie.attack_player(self.player)
-                
-            # Handle spitter zombie projectiles
-            if hasattr(zombie, 'projectiles'):
-                for projectile in zombie.projectiles[:]:
-                    # Render projectiles
-                    pygame.draw.circle(
-                        self.screen, 
-                        (0, 255, 0),  # Green acid
-                        (int(projectile["x"]), int(projectile["y"])), 
-                        projectile["size"]
-                    )
             
             # Check if zombie is dead
             if zombie.health <= 0:
-                # Check if it's an exploder zombie
-                if hasattr(zombie, 'explodes') and zombie.explodes:
-                    # Create explosion
-                    self.explosions.append({
-                        "x": zombie.rect.centerx,
-                        "y": zombie.rect.centery,
-                        "radius": 100,  # Explosion radius
-                        "timer": 30,    # Explosion duration (frames)
-                        "damage": 50    # Explosion damage
-                    })
-                    
-                    # Damage nearby zombies and barricade
-                    for other_zombie in self.zombies[:]:
-                        if other_zombie != zombie:
-                            dx = other_zombie.rect.centerx - zombie.rect.centerx
-                            dy = other_zombie.rect.centery - zombie.rect.centery
-                            distance = math.sqrt(dx*dx + dy*dy)
-                            if distance < 100:  # Within explosion radius
-                                other_zombie.take_damage(50 * (1 - distance/100))  # Damage falls off with distance
-                    
-                    # Damage barricade if nearby
-                    dx = self.barricade.rect.centerx - zombie.rect.centerx
-                    dy = self.barricade.rect.centery - zombie.rect.centery
-                    distance = math.sqrt(dx*dx + dy*dy)
-                    if distance < 100:  # Within explosion radius
-                        self.barricade.take_damage(50 * (1 - distance/100))
-                    
-                    # Damage player if nearby
-                    dx = self.player.rect.centerx - zombie.rect.centerx
-                    dy = self.player.rect.centery - zombie.rect.centery
-                    distance = math.sqrt(dx*dx + dy*dy)
-                    if distance < 100:  # Within explosion radius
-                        self.player.take_damage(50 * (1 - distance/100))
-                
-                # Remove zombie and update stats
                 self.zombies.remove(zombie)
                 self.zombies_killed += 1
                 self.score += 10
@@ -388,65 +313,12 @@ class Game:
             if explosion["timer"] <= 0:
                 self.explosions.remove(explosion)
         
-        # Spawn zombies with more variety
+        # Spawn zombies
         if len(self.zombies) < 5 and self.zombies_spawned_tonight < self.max_zombies_tonight:
-            # Determine zombie type based on day count and randomness
-            zombie_type = "normal"
-            rand = random.random()
-            
-            # Day 1-2: Only normal zombies
-            if self.day_count <= 2:
-                zombie_type = "normal"
-            
-            # Day 3-4: Normal and fast zombies
-            elif self.day_count <= 4:
-                if rand < 0.3:
-                    zombie_type = "fast"
-                else:
-                    zombie_type = "normal"
-            
-            # Day 5-6: Normal, fast, and tank zombies
-            elif self.day_count <= 6:
-                if rand < 0.2:
-                    zombie_type = "tank"
-                elif rand < 0.5:
-                    zombie_type = "fast"
-                else:
-                    zombie_type = "normal"
-            
-            # Day 7-8: Add spitters
-            elif self.day_count <= 8:
-                if rand < 0.15:
-                    zombie_type = "spitter"
-                elif rand < 0.35:
-                    zombie_type = "tank"
-                elif rand < 0.65:
-                    zombie_type = "fast"
-                else:
-                    zombie_type = "normal"
-            
-            # Day 9+: Add exploders and increase other special zombies
-            else:
-                if rand < 0.1:
-                    zombie_type = "exploder"
-                elif rand < 0.25:
-                    zombie_type = "spitter"
-                elif rand < 0.45:
-                    zombie_type = "tank"
-                elif rand < 0.7:
-                    zombie_type = "fast"
-                else:
-                    zombie_type = "normal"
-            
-            # Spawn zombies from the right side of the screen (east of barricade)
-            # Force zombies to spawn at the right edge of the screen
-            x = self.width + random.randint(10, 100)  # Start off-screen to the right
-            y = self.height - 100 - random.randint(0, 50)  # Vary height slightly
-            
-            # Debug info
-            print(f"Spawning {zombie_type} zombie at x={x}, screen width={self.width}, barricade at x={self.barricade.x}")
-            
-            zombie = Zombie(x, y, zombie_type)
+            # Spawn from right side of screen
+            x = self.width + 50
+            y = self.height - 100
+            zombie = Zombie(x, y)
             self.zombies.append(zombie)
             self.zombies_spawned_tonight += 1
         
@@ -463,7 +335,6 @@ class Game:
         if self.cycle_timer >= self.night_duration:
             self.state = GameState.DAY
             self.day_count += 1
-            print(f"Night over - Day count increased to {self.day_count}")
             self.prepare_day()
     def update_menu(self):
         # Play menu music
@@ -486,9 +357,7 @@ class Game:
         # Update shop state
         if not self.shop.active:
             # Shop was closed, go to night phase
-            remaining_resources = self.shop.close()
-            print(f"Shop closed. Resources before: {self.resources}, remaining: {remaining_resources}")
-            self.resources = remaining_resources
+            self.resources = self.shop.close()
             self.state = GameState.NIGHT
             self.prepare_night()
     
@@ -496,10 +365,6 @@ class Game:
         """Setup for day phase"""
         self.cycle_timer = 0
         self.player.reset_position(self.width // 2, self.height - 200)
-        
-        # Regenerate resources in the world
-        self.world.generate_level()
-        print(f"Day {self.day_count} started - Resources regenerated")
         
         # Scale difficulty based on day count
         self.day_duration = max(30, 60 - (self.day_count * 2))  # Days get shorter
@@ -515,23 +380,8 @@ class Game:
         self.max_zombies_tonight = 10 + (self.day_count * 5)  # More zombies each night
         self.night_duration = max(60, 90 + (self.day_count * 5))  # Nights get longer
         
-        # Ensure barricade is at the left side of the screen
-        barricade_x = 200  # Left side of screen
-        barricade_y = self.height - 200
-        self.barricade.x = barricade_x
-        self.barricade.y = barricade_y
-        self.barricade.rect.x = barricade_x
-        self.barricade.rect.y = barricade_y
-        
-        print(f"Night starting: Barricade positioned at x={self.barricade.x}, rect.x={self.barricade.rect.x}")
-        
-        # Position player to the west (left) of the barricade
-        player_x = self.barricade.x - 80  # 80 pixels to the left of barricade
-        player_y = self.height - 200
-        self.player.reset_position(player_x, player_y)
-        
-        # Clear any existing bullets
-        self.player.bullets = []
+        # Reset player position for night defense
+        self.player.reset_position(self.width // 2, self.height - 200)
     
     def reset_game(self):
         """Reset the game to initial state"""
@@ -541,18 +391,9 @@ class Game:
         self.zombies_killed = 0
         self.resources = 0
         self.player = Player(self.width // 2, self.height - 200)
-        
-        # Position barricade at the bottom left for night defense
-        barricade_x = 200  # Left side of screen
-        barricade_y = self.height - 200
-        self.barricade = Barricade(barricade_x, barricade_y, 30, 200)
-        
+        self.barricade = Barricade(200, self.height - 200, 30, 200)
         self.zombies = []
-        
-        # Initialize the world
-        self.world = World(self.width, self.height)
-        
-        # Don't call prepare_day here as it will be called when transitioning from menu to day
+        self.prepare_day()
     def render(self):
         # Clear screen
         self.screen.fill((0, 0, 0))
@@ -788,22 +629,9 @@ class Game:
         # Render barricade
         self.barricade.render(self.screen)
         
-        # Debug: Draw a line showing the right edge of the screen
-        pygame.draw.line(self.screen, (255, 0, 0), (self.width, 0), (self.width, self.height), 2)
-        
-        # Render zombies and their projectiles
+        # Render zombies
         for zombie in self.zombies:
             zombie.render(self.screen)
-            
-            # Render projectiles for spitter zombies
-            if hasattr(zombie, 'projectiles') and zombie.projectiles:
-                for projectile in zombie.projectiles:
-                    pygame.draw.circle(
-                        self.screen, 
-                        (0, 255, 0),  # Green acid
-                        (int(projectile["x"]), int(projectile["y"])), 
-                        projectile["size"]
-                    )
         
         # Render player (fixed position during night)
         self.player.render(self.screen)
@@ -841,13 +669,13 @@ class Game:
         self.screen.blit(zombies_text, (20, 140))
         
         # Right side UI - Weapon and barricade info
-        # Ammo counter - positioned near player
+        # Ammo counter - positioned below player
         ammo_text = font.render(f"Ammo: {self.player.magazine_current}/{self.player.ammo_total}", True, (255, 255, 255))
-        self.screen.blit(ammo_text, (self.player.rect.x, self.player.rect.y - 60))
+        self.screen.blit(ammo_text, (self.width // 2 - ammo_text.get_width() // 2, self.height - 60))
         
         # Weapon type
         weapon_text = font.render(f"Weapon: {self.player.current_weapon.capitalize()}", True, (255, 255, 255))
-        self.screen.blit(weapon_text, (self.player.rect.x, self.player.rect.y - 100))
+        self.screen.blit(weapon_text, (self.width // 2 - weapon_text.get_width() // 2, self.height - 100))
         
         # Barricade health - positioned above barricade
         barricade_health = int(self.barricade.health / self.barricade.max_health * 100)

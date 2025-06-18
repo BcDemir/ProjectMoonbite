@@ -7,6 +7,12 @@ class Zombie:
         self.x = x
         self.y = y
         self.type = zombie_type
+        print(f"Creating zombie of type: {zombie_type}")
+        self.state = "approaching"  # Initial state: approaching, attacking_barricade, attacking_player
+        
+        # Default attack cooldown values for all zombies
+        self.attack_cooldown = 0
+        self.attack_cooldown_max = 60  # 1 second at 60 FPS
         
         # Set attributes based on zombie type
         if zombie_type == "normal":
@@ -113,15 +119,37 @@ class Zombie:
         return cls(x, y, zombie_type)
     
     def update(self, player, barricade=None):
-        # Move towards player/barricade
-        target_x = barricade.rect.right if barricade else player.rect.centerx
+        # Update attack cooldown
+        if self.attack_cooldown > 0:
+            self.attack_cooldown -= 1
         
-        # If barricade exists and is not destroyed, don't move past it
-        if barricade and not barricade.is_destroyed() and self.rect.left > barricade.rect.right:
-            target_x = barricade.rect.right
+        # Determine target based on barricade state
+        if barricade and not barricade.is_destroyed():
+            # Target the barricade if it's not destroyed
+            target_x = barricade.rect.left  # Target the left side of the barricade
+            
+            # Check if colliding with barricade
+            if self.rect.right >= barricade.rect.left:
+                self.state = "attacking_barricade"
+                # Move back to prevent overlap
+                self.x = barricade.rect.left - self.width
+            elif abs(self.rect.right - barricade.rect.left) < 10:
+                self.state = "attacking_barricade"
+            else:
+                self.state = "approaching"
+        else:
+            # Target the player if barricade is destroyed or doesn't exist
+            target_x = player.rect.centerx
+            
+            # Check if close enough to attack player
+            if abs(self.rect.centerx - player.rect.centerx) < 20:
+                self.state = "attacking_player"
+            else:
+                self.state = "approaching"
         
-        # Move towards target
-        if self.x > target_x:
+        # Move towards target if not attacking
+        if self.state == "approaching":
+            # Always move left (towards barricade/player)
             self.x -= self.speed
         
         # Apply gravity
@@ -135,6 +163,74 @@ class Zombie:
             self.on_ground = True
         else:
             self.on_ground = False
+        
+        # Update rect position - IMPORTANT: This ensures collision detection works properly
+        self.rect.x = int(self.x)
+        self.rect.y = int(self.y)
+        
+        # Update rect position
+        self.rect.x = self.x
+        self.rect.y = self.y
+        
+        # Handle range attacks for spitter zombies
+        if self.range_attack:
+            if self.attack_cooldown <= 0:
+                if barricade and not barricade.is_destroyed():
+                    # Create a projectile aimed at the barricade
+                    self.projectiles.append({
+                        "x": self.rect.centerx,
+                        "y": self.rect.centery,
+                        "speed_x": -5,
+                        "speed_y": -2,
+                        "size": 8,
+                        "damage": 15,
+                        "rect": pygame.Rect(self.rect.centerx, self.rect.centery, 8, 8)
+                    })
+                    self.attack_cooldown = self.attack_cooldown_max
+                elif barricade and barricade.is_destroyed():
+                    # Create a projectile aimed at the player
+                    dx = player.rect.centerx - self.rect.centerx
+                    dy = player.rect.centery - self.rect.centery
+                    distance = max(1, math.sqrt(dx*dx + dy*dy))
+                    
+                    # Normalize and scale
+                    speed_x = dx / distance * 6
+                    speed_y = dy / distance * 6 - 2  # Add slight upward arc
+                    
+                    self.projectiles.append({
+                        "x": self.rect.centerx,
+                        "y": self.rect.centery,
+                        "speed_x": speed_x,
+                        "speed_y": speed_y,
+                        "size": 8,
+                        "damage": 15,
+                        "rect": pygame.Rect(self.rect.centerx, self.rect.centery, 8, 8)
+                    })
+                    self.attack_cooldown = self.attack_cooldown_max
+        
+        # Update projectiles
+        for projectile in self.projectiles[:]:
+            projectile["x"] += projectile["speed_x"]
+            projectile["y"] += projectile["speed_y"]
+            
+            # Apply gravity to projectile
+            projectile["speed_y"] += 0.2
+            
+            # Update projectile rect
+            projectile["rect"].x = projectile["x"]
+            projectile["rect"].y = projectile["y"]
+            
+            # Check if projectile hits barricade
+            if barricade and not barricade.is_destroyed() and projectile["rect"].colliderect(barricade.rect):
+                barricade.take_damage(projectile["damage"])
+                self.projectiles.remove(projectile)
+            # Check if projectile hits player
+            elif barricade and barricade.is_destroyed() and projectile["rect"].colliderect(player.rect):
+                player.take_damage(projectile["damage"])
+                self.projectiles.remove(projectile)
+            # Check if projectile hits ground or goes off screen
+            elif projectile["y"] > 700 or projectile["x"] < 0 or projectile["x"] > 1024:
+                self.projectiles.remove(projectile)
         
         # Update rect position
         self.rect.x = self.x
@@ -228,8 +324,37 @@ class Zombie:
             pygame.draw.circle(screen, (0, 255, 0), 
                               (self.rect.centerx, self.rect.centery - 10), 5)
         
+        # Draw attack indicator when attacking barricade or player
+        if self.state == "attacking_barricade" or self.state == "attacking_player":
+            # Draw attack animation (red flash)
+            if self.attack_cooldown < 10:  # Flash during the first part of attack cooldown
+                pygame.draw.rect(screen, (255, 0, 0), 
+                                (self.rect.x - 5, self.rect.y - 5, self.width + 10, self.height + 10), 2)
+        
         # Draw projectiles
         for projectile in self.projectiles:
             pygame.draw.circle(screen, (0, 255, 0), 
                               (int(projectile["x"]), int(projectile["y"])), 
                               projectile["size"])
+    def is_attacking_barricade(self):
+        """Check if zombie is close enough to attack the barricade"""
+        return self.state == "attacking_barricade"
+    def attack_barricade(self, barricade):
+        """Attack the barricade if cooldown allows"""
+        if self.attack_cooldown <= 0:
+            # Apply damage to barricade
+            barricade.take_damage(self.barricade_damage)
+            # Reset attack cooldown
+            self.attack_cooldown = self.attack_cooldown_max
+            
+    def attack_player(self, player):
+        """Attack the player if cooldown allows"""
+        if self.attack_cooldown <= 0:
+            # Apply damage to player
+            player.take_damage(self.damage)
+            # Reset attack cooldown
+            self.attack_cooldown = self.attack_cooldown_max
+            
+    def take_damage(self, damage):
+        """Take damage from player attacks"""
+        self.health -= damage

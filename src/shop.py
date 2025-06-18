@@ -96,27 +96,8 @@ class Shop:
         """Set up shop items based on player's current stats"""
         self.items = []
         
-        # Ammo items
-        ammo_items = [
-            ShopItem(
-                "10 Bullets", 
-                "Add 10 bullets to your ammo supply", 
-                10, 
-                lambda: setattr(self.player, "ammo_total", self.player.ammo_total + 10)
-            ),
-            ShopItem(
-                "25 Bullets", 
-                "Add 25 bullets to your ammo supply", 
-                20, 
-                lambda: setattr(self.player, "ammo_total", self.player.ammo_total + 25)
-            ),
-            ShopItem(
-                "50 Bullets", 
-                "Add 50 bullets to your ammo supply", 
-                35, 
-                lambda: setattr(self.player, "ammo_total", self.player.ammo_total + 50)
-            )
-        ]
+        # Setup ammo items
+        self.setup_ammo_items()
         
         # Barricade items
         barricade_items = [
@@ -224,15 +205,39 @@ class Shop:
         ]
         
         # Organize items by category
-        self.category_items = {
-            0: ammo_items,
-            1: barricade_items,
-            2: weapon_items,
-            3: upgrade_items
-        }
+        self.category_items[1] = barricade_items
+        self.category_items[2] = weapon_items
+        self.category_items[3] = upgrade_items
         
         # Set initial items
         self.items = self.category_items[self.current_category]
+    
+    def setup_ammo_items(self):
+        """Update ammo items with current ammo count"""
+        self.category_items[0] = [
+            ShopItem(
+                "10 Bullets", 
+                f"Add 10 bullets to your ammo supply (Total: {self.player.ammo_total + 10})", 
+                10, 
+                lambda: setattr(self.player, "ammo_total", self.player.ammo_total + 10)
+            ),
+            ShopItem(
+                "25 Bullets", 
+                f"Add 25 bullets to your ammo supply (Total: {self.player.ammo_total + 25})", 
+                20, 
+                lambda: setattr(self.player, "ammo_total", self.player.ammo_total + 25)
+            ),
+            ShopItem(
+                "50 Bullets", 
+                f"Add 50 bullets to your ammo supply (Total: {self.player.ammo_total + 50})", 
+                35, 
+                lambda: setattr(self.player, "ammo_total", self.player.ammo_total + 50)
+            )
+        ]
+        
+        # Update current items if we're in the ammo category
+        if self.current_category == 0:
+            self.items = self.category_items[0]
     
     def _upgrade_barricade_max_health(self, percent):
         """Increase barricade max health"""
@@ -294,6 +299,9 @@ class Shop:
                     self.current_category = (self.current_category - 1) % len(self.categories)
                     self.items = self.category_items[self.current_category]
                     self.selected_item = 0
+                    # Update ammo descriptions if switching to ammo category
+                    if self.current_category == 0:
+                        self.setup_ammo_items()
                     return True
                 
                 # Next category button
@@ -301,6 +309,9 @@ class Shop:
                     self.current_category = (self.current_category + 1) % len(self.categories)
                     self.items = self.category_items[self.current_category]
                     self.selected_item = 0
+                    # Update ammo descriptions if switching to ammo category
+                    if self.current_category == 0:
+                        self.setup_ammo_items()
                     return True
                 
                 # Exit button
@@ -314,6 +325,9 @@ class Shop:
                         item = self.items[self.selected_item]
                         if item.can_purchase(self.resources):
                             self.resources, success = item.purchase(self.resources)
+                            # Update ammo descriptions if in ammo category
+                            if self.current_category == 0:
+                                self.setup_ammo_items()
                     return True
                 
                 # Check if clicked on an item
@@ -340,11 +354,17 @@ class Shop:
                 self.current_category = (self.current_category - 1) % len(self.categories)
                 self.items = self.category_items[self.current_category]
                 self.selected_item = 0
+                # Update ammo descriptions if switching to ammo category
+                if self.current_category == 0:
+                    self.setup_ammo_items()
                 return True
             elif event.key == pygame.K_RIGHT:
                 self.current_category = (self.current_category + 1) % len(self.categories)
                 self.items = self.category_items[self.current_category]
                 self.selected_item = 0
+                # Update ammo descriptions if switching to ammo category
+                if self.current_category == 0:
+                    self.setup_ammo_items()
                 return True
             
             # Purchase
@@ -353,6 +373,9 @@ class Shop:
                     item = self.items[self.selected_item]
                     if item.can_purchase(self.resources):
                         self.resources, success = item.purchase(self.resources)
+                        # Update ammo descriptions if in ammo category
+                        if self.current_category == 0:
+                            self.setup_ammo_items()
                 return True
             elif event.key == pygame.K_ESCAPE:
                 self.active = False
@@ -375,6 +398,11 @@ class Shop:
         # Resources
         resources_text = self.item_font.render(f"Resources: {self.resources}", True, (255, 255, 0))
         screen.blit(resources_text, (self.width // 2 - resources_text.get_width() // 2, 70))
+        
+        # Show current ammo count when in Ammo category
+        if self.current_category == 0:  # Ammo category
+            ammo_text = self.item_font.render(f"Current Ammo: {self.player.ammo_total}", True, (200, 200, 255))
+            screen.blit(ammo_text, (self.width // 2 - ammo_text.get_width() // 2, 110))
         
         # Draw current weapon info
         if self.current_category == 2 or self.current_category == 3:  # Weapons or upgrades category
@@ -415,6 +443,8 @@ class Shop:
             
             # Adjust starting position for items
             items_start_y = 200
+        elif self.current_category == 0:  # Ammo category
+            items_start_y = 170  # Adjust for ammo count display
         else:
             items_start_y = 150
         

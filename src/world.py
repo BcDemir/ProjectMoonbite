@@ -29,11 +29,14 @@ class Resource:
     def __init__(self, x, y, resource_type="ammo"):
         self.x = x
         self.y = y
-        self.width = 20
-        self.height = 20
+        self.width = 30  # Increased from 20
+        self.height = 30  # Increased from 20
         self.rect = pygame.Rect(x, y, self.width, self.height)
         self.type = resource_type
         self.collected = False
+        self.bob_offset = 0
+        self.bob_direction = 1
+        self.bob_speed = 0.2
         
         # Set appearance based on type
         if resource_type == "ammo":
@@ -45,6 +48,15 @@ class Resource:
         else:
             self.color = (255, 255, 255)  # White
     
+    def update(self):
+        # Make resources bob up and down
+        self.bob_offset += self.bob_direction * self.bob_speed
+        if abs(self.bob_offset) > 5:
+            self.bob_direction *= -1
+        
+        # Update rect position with bob effect
+        self.rect.y = self.y + self.bob_offset
+    
     def render(self, screen, camera):
         if not self.collected:
             # Only render if resource is visible on screen
@@ -52,6 +64,24 @@ class Resource:
             if camera_rect.right >= 0 and camera_rect.left <= camera.width:
                 pygame.draw.rect(screen, self.color, camera_rect)
                 pygame.draw.rect(screen, (0, 0, 0), camera_rect, 2)  # Black border
+                
+                # Draw an icon inside based on resource type
+                if self.type == "ammo":
+                    # Draw bullet icon
+                    pygame.draw.rect(screen, (100, 100, 0), 
+                                    (camera_rect.x + 10, camera_rect.y + 12, 10, 6))
+                elif self.type == "health":
+                    # Draw plus sign
+                    pygame.draw.rect(screen, (255, 255, 255), 
+                                    (camera_rect.x + 13, camera_rect.y + 8, 4, 14))
+                    pygame.draw.rect(screen, (255, 255, 255), 
+                                    (camera_rect.x + 8, camera_rect.y + 13, 14, 4))
+                elif self.type == "weapon":
+                    # Draw weapon icon
+                    pygame.draw.rect(screen, (200, 200, 255), 
+                                    (camera_rect.x + 8, camera_rect.y + 15, 14, 4))
+                    pygame.draw.rect(screen, (200, 200, 255), 
+                                    (camera_rect.x + 12, camera_rect.y + 8, 6, 7))
 
 class World:
     def __init__(self, screen_width, screen_height):
@@ -144,11 +174,13 @@ class World:
             if not resource.collected and resource.rect.colliderect(player_rect):
                 resource.collected = True
                 collected.append(resource.type)
+                print(f"Resource collision detected: {resource.type}")
         return collected
     
     def update(self):
-        # No enemies to update in daytime
-        pass
+        # Update resources (bobbing animation)
+        for resource in self.resources:
+            resource.update()
     
     def render(self, screen, camera):
         # Draw sky gradient background
@@ -168,3 +200,16 @@ class World:
         # Draw resources
         for resource in self.resources:
             resource.render(screen, camera)
+    def render_night(self, screen):
+        """Render the world during night phase (no camera)"""
+        # Draw a dark background
+        screen.fill((20, 20, 40))
+        
+        # Draw ground
+        ground_rect = pygame.Rect(0, self.height - self.ground_height, self.width, self.ground_height)
+        pygame.draw.rect(screen, (50, 50, 50), ground_rect)
+        
+        # Draw a simple horizon line
+        pygame.draw.line(screen, (70, 70, 90), 
+                        (0, self.height - self.ground_height), 
+                        (self.width, self.height - self.ground_height), 2)
