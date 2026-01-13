@@ -2,9 +2,9 @@
 
 I started with the following prompt:
 
-'''bash
+```bash
 i want to develop a game with pygame which is a 2d platformer where you defend zombie hordes at night. You will scavange for resources at daytime. The night should be an arcade game where you shoot at incoming zombies behind cover.
-'''
+```
 
 The structure of the game in return is:
 
@@ -82,4 +82,26 @@ types, you can simply add new options in the Zombie class.
 
 There was an issue with starting to game so i asked to fix it which fixed the issue.
 
+```bash
 I need to change the day time game. The day time should be a map of a small city. The player can choose places to visit such as homes, police station, hardware store etc. Once the mouse is on top of a place, it should highlight what can be scavenged and the risk of getting bit by zombies. Once the player clicked on a place, it will show the end results such as if the player is bit, the things they scavenged. Then the night game starts.
+```
+
+**- This prompt lead to an error where the AI stuck at some point so I have to revert and ask a simpler prompt.**
+
+- From this point forward, I used simpler prompts and step by step approach. I modified small parts of the game to reach the final game I wanted to develop.
+
+The steps I followed until the end of the development:
+
+- Change the daytime scene to be larger the before.
+- Added a shop screen
+- added weapon and other improvements to the shop screen.
+- Added a leaderboard
+- Fixed the issue with ammo on shop screen
+- Fixed an issue with the barricade. It was destroy too fast and nothing happens to the player.
+- Daytime fixed to 30 seconds. Night time ends after all zombies are killed.
+- added menu, daytime, nighttime, shop music
+- added a crosshair to improve feedback on shooting
+- Fixed issues with the crosshair
+- Fixed bullets and crosshair alignment
+- Fixed issues with the UI
+- Fixing issues after changing UI
